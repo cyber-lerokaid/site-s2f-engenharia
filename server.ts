@@ -1,116 +1,210 @@
-import express from 'express';
 import cors from 'cors';
+import dotenv from 'dotenv';
+import express from 'express';
 import nodemailer from 'nodemailer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 
+dotenv.config();
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-async function startServer() {
-  const app = express();
-  const PORT = 3000;
+type LeadPayload = {
+  name?: string;
+  company?: string;
+  email?: string;
+  phone?: string;
+  service?: string;
+  message?: string;
+};
 
-  // Middleware
-  app.use(cors());
-  app.use(express.json());
+const escapeHtml = (value: string) =>
+  value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 
-  // API Routes
-  app.post('/submit-quote', async (req, res) => {
-    const { name, company, email, phone, message } = req.body;
+const hasMailConfig = () =>
+  Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.SMTP_USER && process.env.SMTP_PASS);
 
-    console.log('Received quote request:', { name, company, email });
+function buildLeadMarkup(payload: Required<LeadPayload>) {
+  const fields = [
+    ['Nome', payload.name],
+    ['Empresa', payload.company],
+    ['E-mail', payload.email],
+    ['Telefone', payload.phone],
+    ['Serviço de interesse', payload.service],
+  ];
 
-    // Configure Nodemailer
-    const transporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 587,
-      secure: false, // true for 465, false for other ports
-      auth: {
-        user: 'rsantoss0012@gmail.com',
-        pass: 'ktqd bgtf mifl kxoi',
-      },
-    });
+  const rows = fields
+    .map(
+      ([label, value]) =>
+        `<tr><td style="padding:10px 0;color:#607086;font-weight:700;">${label}</td><td style="padding:10px 0;color:#0b1522;">${escapeHtml(
+          value,
+        )}</td></tr>`,
+    )
+    .join('');
 
-    const htmlContent = `
-      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #eee; padding: 20px; border-radius: 10px;">
-        <h2 style="color: #0A3D73; border-bottom: 2px solid #0A3D73; padding-bottom: 10px;">Nova Solicitação de Orçamento - S2F</h2>
-        <div style="margin-top: 20px;">
-          <p><strong>Nome:</strong> ${name}</p>
-          <p><strong>Empresa:</strong> ${company}</p>
-          <p><strong>E-mail:</strong> ${email}</p>
-          <p><strong>Telefone:</strong> ${phone}</p>
-        </div>
-        <div style="margin-top: 20px; background-color: #f9f9f9; padding: 15px; border-radius: 5px;">
-          <p><strong>Descrição do Projeto:</strong></p>
-          <p>${message}</p>
-        </div>
-        <div style="margin-top: 20px; font-size: 12px; color: #777; border-top: 1px solid #eee; padding-top: 10px;">
-          Este e-mail foi enviado automaticamente pelo sistema de leads da S2F Engenharia.
-        </div>
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:32px;background:#f4f7fb;border:1px solid #d6dee8;border-radius:18px;color:#0b1522;">
+      <p style="margin:0 0 10px;color:#15a19a;font-size:12px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">Novo lead via site</p>
+      <h2 style="margin:0 0 18px;font-size:28px;line-height:1.2;">Solicitação comercial recebida</h2>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:18px;">${rows}</table>
+      <div style="padding:18px;background:#ffffff;border-radius:14px;border:1px solid #d6dee8;">
+        <p style="margin:0 0 8px;color:#607086;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Escopo inicial</p>
+        <p style="margin:0;line-height:1.7;">${escapeHtml(payload.message)}</p>
       </div>
-    `;
+    </div>
+  `;
+}
 
-    const clientHtmlContent = `
-      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #eee; padding: 20px; border-radius: 10px;">
-        <h2 style="color: #0A3D73; border-bottom: 2px solid #0A3D73; padding-bottom: 10px;">Confirmação de Solicitação - S2F Engenharia</h2>
-        <p>Olá <strong>${name}</strong>,</p>
-        <p>Recebemos sua solicitação de orçamento para a empresa <strong>${company}</strong>.</p>
-        <p>Nossa equipe técnica já foi notificada e entrará em contato com você em breve através do e-mail <strong>${email}</strong> ou telefone <strong>${phone}</strong>.</p>
-        <div style="margin-top: 20px; background-color: #f9f9f9; padding: 15px; border-radius: 5px;">
-          <p><strong>Resumo da sua mensagem:</strong></p>
-          <p>${message}</p>
-        </div>
-        <p>Atenciosamente,<br>Equipe S2F Engenharia & Serviços</p>
-        <div style="margin-top: 20px; font-size: 12px; color: #777; border-top: 1px solid #eee; padding-top: 10px;">
-          Este é um e-mail automático, por favor não responda.
-        </div>
+function buildClientConfirmation(payload: Required<LeadPayload>) {
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:32px;background:#f4f7fb;border:1px solid #d6dee8;border-radius:18px;color:#0b1522;">
+      <p style="margin:0 0 10px;color:#15a19a;font-size:12px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;">S2F Engenharia</p>
+      <h2 style="margin:0 0 18px;font-size:28px;line-height:1.2;">Recebemos sua solicitação</h2>
+      <p style="margin:0 0 14px;line-height:1.7;">Olá, <strong>${escapeHtml(
+        payload.name,
+      )}</strong>. Obrigado por entrar em contato com a S2F Engenharia.</p>
+      <p style="margin:0 0 14px;line-height:1.7;">Nossa equipe comercial e técnica vai analisar o contexto de <strong>${escapeHtml(
+        payload.company,
+      )}</strong> e retornar com os próximos passos pelo e-mail <strong>${escapeHtml(
+        payload.email,
+      )}</strong> ou pelo telefone <strong>${escapeHtml(payload.phone)}</strong>.</p>
+      <div style="padding:18px;background:#ffffff;border-radius:14px;border:1px solid #d6dee8;">
+        <p style="margin:0 0 8px;color:#607086;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Demanda informada</p>
+        <p style="margin:0 0 6px;line-height:1.7;"><strong>Serviço:</strong> ${escapeHtml(payload.service)}</p>
+        <p style="margin:0;line-height:1.7;">${escapeHtml(payload.message)}</p>
       </div>
-    `;
+      <p style="margin:18px 0 0;line-height:1.7;">Se a demanda for urgente, você também pode falar pelo WhatsApp comercial.</p>
+    </div>
+  `;
+}
 
-    try {
-      // Send notification to S2F Team
-      await transporter.sendMail({
-        from: '"S2F Website" <rsantoss0012@gmail.com>',
-        to: 'mickey_gimli@hotmail.com',
-        subject: `NOVO LEAD: ${company} - ${name}`,
-        html: htmlContent,
-      });
+function validateLead(body: LeadPayload) {
+  const errors: string[] = [];
+  const email = body.email?.trim() ?? '';
+  const requiredFields: Array<[keyof LeadPayload, string]> = [
+    ['name', 'nome'],
+    ['company', 'empresa'],
+    ['email', 'e-mail'],
+    ['phone', 'telefone'],
+    ['service', 'serviço'],
+    ['message', 'mensagem'],
+  ];
 
-      // Send confirmation to Client
-      await transporter.sendMail({
-        from: '"S2F Engenharia" <rsantoss0012@gmail.com>',
-        to: email,
-        subject: `Recebemos sua solicitação - S2F Engenharia`,
-        html: clientHtmlContent,
-      });
-
-      console.log('Emails sent successfully');
-      res.status(200).json({ status: 'success', message: 'Emails dispatched' });
-    } catch (error) {
-      console.error('Error sending email:', error);
-      res.status(500).json({ status: 'error', message: 'Failed to dispatch email' });
+  requiredFields.forEach(([field, label]) => {
+    if (!body[field]?.trim()) {
+      errors.push(`O campo ${label} é obrigatório.`);
     }
   });
 
-  // Vite middleware for development
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    errors.push('Informe um e-mail válido.');
+  }
+
+  return errors;
+}
+
+async function startServer() {
+  const app = express();
+  const port = Number(process.env.PORT ?? 3000);
+
+  app.use(cors());
+  app.use(express.json());
+
+  app.post('/submit-quote', async (req, res) => {
+    const payload = req.body as LeadPayload;
+    const errors = validateLead(payload);
+
+    if (errors.length > 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: errors[0],
+      });
+    }
+
+    const normalizedPayload: Required<LeadPayload> = {
+      name: payload.name!.trim(),
+      company: payload.company!.trim(),
+      email: payload.email!.trim(),
+      phone: payload.phone!.trim(),
+      service: payload.service!.trim(),
+      message: payload.message!.trim(),
+    };
+
+    if (!hasMailConfig()) {
+      console.warn('SMTP não configurado. Lead registrado apenas no servidor local.', normalizedPayload);
+      return res.status(202).json({
+        status: 'queued',
+        message:
+          'Solicitação registrada com sucesso. O envio por e-mail ainda não está configurado neste ambiente, mas os dados foram recebidos para validação local.',
+      });
+    }
+
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT),
+      secure: Number(process.env.SMTP_PORT) === 465,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    });
+
+    const commercialEmail = process.env.COMMERCIAL_EMAIL ?? process.env.SMTP_USER!;
+    const fromAddress = process.env.SMTP_FROM ?? process.env.SMTP_USER!;
+
+    try {
+      await transporter.sendMail({
+        from: `"S2F Engenharia" <${fromAddress}>`,
+        to: commercialEmail,
+        subject: `Novo lead | ${normalizedPayload.company} | ${normalizedPayload.service}`,
+        html: buildLeadMarkup(normalizedPayload),
+      });
+
+      await transporter.sendMail({
+        from: `"S2F Engenharia" <${fromAddress}>`,
+        to: normalizedPayload.email,
+        subject: 'Recebemos sua solicitação | S2F Engenharia',
+        html: buildClientConfirmation(normalizedPayload),
+      });
+
+      return res.status(200).json({
+        status: 'success',
+        message: 'Solicitação enviada com sucesso. Nossa equipe vai retornar em breve.',
+      });
+    } catch (error) {
+      console.error('Erro ao enviar e-mail do lead:', error);
+      return res.status(500).json({
+        status: 'error',
+        message:
+          'Não foi possível concluir o envio agora. Tente novamente em instantes ou use o WhatsApp comercial.',
+      });
+    }
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
+      root: __dirname,
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = path.join(__dirname, 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
+    app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`Servidor da S2F rodando em http://localhost:${port}`);
   });
 }
 
